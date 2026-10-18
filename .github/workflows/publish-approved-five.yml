@@ -1,0 +1,276 @@
+name: Publish five approved contributions
+on:
+  push:
+    branches: [publish/approved-five-20261018]
+    paths: [.github/workflows/publish-approved-five.yml]
+permissions:
+  contents: read
+  checks: write
+concurrency:
+  group: approved-five-publisher
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.repository == 'jdotc1/fastremap'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Authorize GitHub CLI and publish approved revisions
+        env:
+          REPORT_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 - <<'PUBLISHER'
+          import json, os, re, shutil, subprocess, tempfile, time
+          from urllib.parse import urlencode, quote
+
+          def verify_identity(user):
+              if user.get('login') != 'jdotc1' or user.get('id') != 138259519:
+                  raise ValueError('Authorization must belong to jdotc1 (138259519).')
+
+          def verify_changes(diff, expected):
+              actual = {item['filename']: item['sha'] for item in diff.get('files', [])}
+              if (diff.get('status') != 'ahead' or diff.get('ahead_by') != 1
+                      or diff.get('behind_by') != 0 or actual != expected
+                      or len(actual) != len(diff.get('files', []))):
+                  raise ValueError('Branch contents differ from the approved revision; stopping.')
+
+          def verify_pr(pr, upstream, fork, branch, base, sha):
+              verify_identity(pr.get('user', {}))
+              if (pr.get('state') != 'open' or pr.get('head', {}).get('sha') != sha
+                      or pr['head'].get('ref') != branch
+                      or pr['head'].get('repo', {}).get('full_name') != fork
+                      or pr.get('base', {}).get('ref') != base
+                      or pr['base'].get('repo', {}).get('full_name') != upstream
+                      or not pr.get('html_url', '').startswith('https://github.com/' + upstream + '/pull/')):
+                  raise ValueError('Published PR identity, source, or destination does not match.')
+              return pr['html_url']
+
+          def select_existing(prs):
+              if not prs:
+                  return None
+              if len(prs) != 1 or prs[0].get('state') != 'open':
+                  raise ValueError('Existing PR is closed or ambiguous; no replacement will be created.')
+              return prs[0]
+
+          disclosure = 'Codex assisted. I selected the issue, approved the scope, reviewed and approved the final code, and take full responsibility.'
+          proposals = [
+              {
+                  'key':'nilearn_6148', 'upstream':'nilearn/nilearn', 'fork':'jdotc1/nilearn', 'issue':6148,
+                  'base_branch':'main', 'base_sha':'44da9ef86a8edc11c8570fb8e3e078ef9561787d',
+                  'branch':'review/nilearn-6148', 'head_sha':'ed9471fbca6d8b3521a5b45ce370f8cf7120756a',
+                  'title':'[MAINT] Reuse fitted NiftiMasker test setup',
+                  'expected':{
+                      'CITATION.cff':'1d95aa8a953c8965200c3d709ec0c62dce4f8d22',
+                      'doc/changes/latest.rst':'0cc8794be6f22b44005e06e096d3bca881d6a769',
+                      'nilearn/maskers/tests/conftest.py':'f9c1fa490b1991ffb4dbdbdfd76fde41383a368c',
+                      'nilearn/maskers/tests/test_nifti_masker.py':'3b4bca91c10744f9c58698f209c433751b512b0b'},
+                  'body':'''Closes #6148.
+
+          Add a `make_fitted_nifti_masker` fixture factory that constructs and fits a fresh `NiftiMasker` for each supplied mask. Reuse it for four plain constructor-plus-fit sequences in `test_matrix_orientation` and `test_mask_4d`.
+
+          The configured standardization/detrending setup, fitting-specific cases, and all assertions remain unchanged. This is limited to the two existing tests; it does not change production code or migrate other masker tests. The changelog and contributor entry are included.
+
+          Validation during preparation: all 27 tests in the affected module passed before and after. A syntax-tree comparison reversed the four fixture calls into their original setup statements and confirmed the remaining test logic was unchanged. Applicable changed-file repository hooks passed. The full repository suite and documentation build were not run.
+
+          ### Tool assistance
+
+          ''' + disclosure
+              },
+              {
+                  'key':'nilearn_6662', 'upstream':'nilearn/nilearn', 'fork':'jdotc1/nilearn', 'issue':6662,
+                  'base_branch':'main', 'base_sha':'44da9ef86a8edc11c8570fb8e3e078ef9561787d',
+                  'branch':'review/nilearn-6662', 'head_sha':'058d97b6318984a2f1df6a0795bdf959fde24af0',
+                  'title':'[FIX] Stabilize plotting test parameter order',
+                  'expected':{
+                      'CITATION.cff':'1d95aa8a953c8965200c3d709ec0c62dce4f8d22',
+                      'doc/changes/latest.rst':'daca8ef6a0860702505f2e202913b64a6045cc33',
+                      'nilearn/plotting/image/tests/test_img_plotting.py':'d2872399c10dcd6e2a1e097004b9dd73201b1d87',
+                      'nilearn/plotting/tests/test_baseline_comparisons.py':'c52d09c2d9089bcf8c7f3d40ebb3c289f57cff3f'},
+                  'body':'''Closes #6662.
+
+          Replace unordered plotting-function sets with ordered tuples and ordered filtering in the image plotting and baseline-comparison test modules. This prevents different pytest-xdist workers collecting the same test parameters in different orders. The changes cover the shared function collections and inline selections, without changing production plotting code, assertions, or image baselines. The changelog and contributor entry are included.
+
+          Validation during preparation: the original four-worker collection failure became 40 passing selected tests. All 367 collected case IDs were preserved, and 22 actual pixel comparisons passed against the checked-in baselines using Matplotlib 3.8.0. Applicable changed-file repository hooks passed. The optional retry plugin was disabled because its local socket initialization was unavailable, and the worker-order check also disabled the optional random-order plugin. The full repository suite, full documentation build, and complete minimum-version CI matrix were not run.
+
+          ### Tool assistance
+
+          ''' + disclosure
+              },
+              {
+                  'key':'nipype_3644', 'upstream':'nipy/nipype', 'fork':'jdotc1/nipype', 'issue':3644,
+                  'base_branch':'master', 'base_sha':'6e28627d3a616b61bcbbe7040f698b0e5a2c5722',
+                  'branch':'enh/selectfiles-recursive-3644', 'head_sha':'5f504d633ac517aea413465e603d3431a9e6c706',
+                  'title':'[ENH] Add optional recursive globbing to SelectFiles',
+                  'expected':{
+                      'nipype/interfaces/io.py':'7ec1b37f02c1caf17be9f42a0ed94fe60ccafce8',
+                      'nipype/interfaces/tests/test_auto_SelectFiles.py':'2df61f8e847fac4fe3e133a2aaac237c832ce6ef',
+                      'nipype/interfaces/tests/test_io.py':'aed4d0d90f7d94e3aafc6eee7a2a638ecbb3dc2a'},
+                  'body':'''Fixes #3644.
+
+          Add an optional `recursive` boolean to `SelectFiles`, defaulting to false. Enabling it allows `**` to match zero or more subdirectories while retaining existing template formatting, sorting, and output-shape handling.
+
+          Existing templates with a dynamic field named `{recursive}` retain their original meaning, with recursive matching disabled in that case. Includes documentation, behavioral regression tests, and the regenerated interface-specification test.
+
+          Validation during preparation: 19 focused behavioral/specification tests and one class documentation example passed. The final behavioral tests failed in five expected places against the original implementation. Formatting and diff checks passed. The complete `make check-before-commit` target was not run; it includes broader regeneration and external interfaces and currently references an absent `setup.py`. The existing empty-result error for `raise_on_empty=False` with `force_lists=False` is outside this change; the new empty-result test uses forced-list mode.
+
+          - [x] I acknowledge that this contribution will be available under the Apache 2 license.'''
+              },
+              {
+                  'key':'batchgenerators_137', 'upstream':'MIC-DKFZ/batchgenerators', 'fork':'jdotc1/batchgenerators', 'issue':137,
+                  'base_branch':'master', 'base_sha':'12a397217f95f62b706dd1be86b7b0f50cf24d1d',
+                  'branch':'fix/scale-ranges-below-one-137', 'head_sha':None,
+                  'title':'Respect requested scale ranges below one',
+                  'expected':{
+                      'batchgenerators/augmentations/spatial_transformations.py':'90b953ce542b2d419db5316f952fd7a025d4dd7b',
+                      'tests/test_spatial_transformations.py':'f4f4d6bedee8e95c7897ca78b7ece7e3b04bd9de'},
+                  'body':'''Fixes #137.
+
+          Keep sampled scale factors within intervals entirely below one in both `augment_spatial` and `augment_spatial_2`, including isotropic and per-axis paths. The correction preserves the existing random branch selection, number of draws, split around one, and identity branch for intervals ending at one. Invalid or reversed intervals are outside this correction.
+
+          Validation during preparation: the final four-file suite passed 40 tests and 146 parameterized subcases. An additional 224-case seeded comparison preserved all random states and all 160 unaffected outputs. Tests cover both augmentation functions, two and three dimensions, scaling modes and fallback, constant bounds, random-state preservation, and the upper-bound-of-one identity branch. The original implementation reproduced 59 failing bound checks. The existing empty-input segmentation-resize warning was present before and after. No full application or model-training validation is claimed.'''
+              },
+              {
+                  'key':'dicom2nifti_114', 'upstream':'icometrix/dicom2nifti', 'fork':'jdotc1/dicom2nifti', 'issue':114,
+                  'base_branch':'master', 'base_sha':'d68253ef3b173f43067b6f9db83788bc25cf50cd',
+                  'branch':'fix/preserve-temporal-metadata-114', 'head_sha':None,
+                  'title':'Preserve temporal metadata when reorienting 4D images',
+                  'expected':{
+                      'dicom2nifti/image_reorientation.py':'6d9bd0aa8f191836b157652aeefd664829e6c349',
+                      'tests/test_image_reorientation.py':'3de630f95dd8b02254e1944c795bc1ead491158b'},
+                  'body':'''Fixes #114.
+
+          Preserve the fourth-dimension zoom and time unit when reorienting NIfTI images. Spatial zooms continue to derive from the rebuilt affine, and the existing data-scaling behavior remains unchanged. Limit timing restoration to NIfTI headers so previously accepted Analyze and MGH filename inputs retain their behavior.
+
+          Validation during preparation: five test methods covering 12 scenarios passed. The same final tests produced eight expected timing failures against the original source, while format-compatibility controls passed. Coverage includes image and filename inputs, seconds/milliseconds/unknown time units, returned and reloaded files, anisotropic axis permutation and flips, 3-D controls, stored scaling applied exactly once, NIfTI-2 timing, and Analyze/MGH compatibility. An additional four-format comparison passed. Full vendor-specific DICOM conversions, compressed-DICOM/GDCM paths, singleton-axis handling, and exhaustive orientation testing were not run.'''
+              }
+          ]
+          env = dict(os.environ)
+          report_token = env.pop('REPORT_TOKEN')
+          for key in ('GH_TOKEN', 'GITHUB_TOKEN'):
+              env.pop(key, None)
+          config = tempfile.mkdtemp(prefix='approved-publisher-', dir=os.environ['RUNNER_TEMP'])
+          env['GH_CONFIG_DIR'] = config
+          report_env = dict(env, GH_TOKEN=report_token)
+          repo = 'jdotc1/fastremap'
+          check_id = None
+
+          def api(path, method='GET', data=None, report=False, missing_ok=False):
+              if path.startswith(('/', 'http')):
+                  raise ValueError('Expected a relative GitHub API path.')
+              command = ['gh', 'api', '--hostname', 'github.com', '--method', method, path]
+              if data is not None:
+                  command += ['--input', '-']
+              result = subprocess.run(command, input=None if data is None else json.dumps(data),
+                  text=True, capture_output=True, env=report_env if report else env)
+              if result.returncode:
+                  if missing_ok and '(HTTP 404)' in result.stderr:
+                      return None
+                  raise RuntimeError(result.stderr.strip()[-1500:])
+              return json.loads(result.stdout) if result.stdout.strip() else {}
+
+          def report(title, summary, conclusion=None):
+              data = {'output': {'title': title[:255], 'summary': summary[:60000]}}
+              if conclusion:
+                  data.update(status='completed', conclusion=conclusion)
+              api(f'repos/{repo}/check-runs/{check_id}', 'PATCH', data, report=True)
+              if conclusion:
+                  with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as stream:
+                      stream.write('## ' + title + '\n\n' + summary + '\n')
+
+          def ensure_fork(p):
+              fork = api('repos/' + p['fork'], missing_ok=True)
+              if fork is None:
+                  api('repos/' + p['upstream'] + '/forks', 'POST', {'default_branch_only': True})
+                  for attempt in range(20):
+                      time.sleep(3)
+                      fork = api('repos/' + p['fork'], missing_ok=True)
+                      if fork:
+                          break
+              if not fork or not fork.get('fork') or fork.get('parent', {}).get('full_name') != p['upstream']:
+                  raise ValueError('Expected fork unavailable or has a different parent.')
+
+          def publish_ready(p):
+              reference = api('repos/' + p['fork'] + '/git/ref/heads/' + quote(p['branch'], safe='/'), missing_ok=True)
+              if reference is None:
+                  if p['head_sha']:
+                      raise ValueError('Previously approved branch is missing.')
+                  return None
+              sha = reference['object']['sha']
+              if p['head_sha'] and sha != p['head_sha']:
+                  raise ValueError('Approved branch changed; refusing to publish different code.')
+              verify_changes(api('repos/' + p['fork'] + '/compare/' + p['base_sha'] + '...' + sha), p['expected'])
+              query = urlencode({'state':'all', 'head':'jdotc1:' + p['branch'], 'base':p['base_branch'], 'per_page':100})
+              pr = select_existing(api('repos/' + p['upstream'] + '/pulls?' + query))
+              if pr is None:
+                  issue = api('repos/' + p['upstream'] + '/issues/' + str(p['issue']))
+                  if issue.get('state') != 'open':
+                      raise ValueError('Issue is no longer open; no new PR will be created.')
+                  pr = api('repos/' + p['upstream'] + '/pulls', 'POST', {
+                      'title':p['title'], 'body':p['body'], 'head':'jdotc1:' + p['branch'],
+                      'base':p['base_branch'], 'maintainer_can_modify':True, 'draft':False})
+              saved = api('repos/' + p['upstream'] + '/pulls/' + str(pr['number']))
+              return verify_pr(saved, p['upstream'], p['fork'], p['branch'], p['base_branch'], sha)
+
+          try:
+              if os.environ['GITHUB_REPOSITORY'] != repo or len(proposals) != 5:
+                  raise ValueError('Wrong execution repository or publication set.')
+              check = api('repos/' + repo + '/check-runs', 'POST', {
+                  'name':'Approved PR publication: authorization and results',
+                  'head_sha':os.environ['GITHUB_SHA'], 'status':'in_progress',
+                  'output':{'title':'Starting GitHub authorization', 'summary':'No upstream PR has been created by this job.'}}, report=True)
+              check_id = check['id']
+              login = subprocess.Popen(['gh', 'auth', 'login', '--hostname', 'github.com',
+                  '--git-protocol', 'https', '--web', '--scopes', 'offline_access'],
+                  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+              for line in login.stdout:
+                  line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+                  match = re.search(r'one-time code:\s*([A-Z0-9]{4}-[A-Z0-9]{4})', line)
+                  if match:
+                      message = ('Open https://github.com/login/device and enter **' + match.group(1)
+                          + '**. Authorize **GitHub CLI** while signed in as **jdotc1**. '
+                          'GitHub displays the requested CLI account scopes. This temporary job is restricted '
+                          'to the five already-approved contributions. No password or token is needed in chat. '
+                          'The code expires after 15 minutes.')
+                      print(message, flush=True)
+                      report('GitHub authorization required: ' + match.group(1), message)
+              if login.wait() != 0:
+                  raise RuntimeError('GitHub sign-in was not completed. No PRs were published by this job.')
+              verify_identity(api('user'))
+              for p in proposals:
+                  ensure_fork(p)
+              results = {}
+              pending = {p['key']:p for p in proposals}
+              deadline = time.monotonic() + 1200
+              while pending and time.monotonic() < deadline:
+                  for key, p in list(pending.items()):
+                      try:
+                          url = publish_ready(p)
+                          if url:
+                              results[key] = {'ok':True, 'message':url}
+                              del pending[key]
+                      except Exception as exc:
+                          results[key] = {'ok':False, 'message':str(exc)}
+                          del pending[key]
+                  lines = ['- ' + key + ': ' + value['message'] for key, value in results.items()]
+                  lines += ['- ' + key + ': fork ready; waiting for the exact approved branch.' for key in pending]
+                  summary = '\n'.join(lines)
+                  report('Authorized; publication progress', summary)
+                  if pending:
+                      time.sleep(15)
+              for key in pending:
+                  results[key] = {'ok':False, 'message':'Timed out waiting for the approved branch; no PR created.'}
+              success = len(results) == 5 and all(value['ok'] for value in results.values())
+              summary = '\n'.join('- ' + key + ': ' + value['message'] for key, value in results.items())
+              report('All five PRs published' if success else 'Publication needs follow-up', summary,
+                     'success' if success else 'failure')
+              print(summary, flush=True)
+              if not success:
+                  raise SystemExit(1)
+          except Exception as exc:
+              if check_id:
+                  report('Publication stopped', str(exc), 'failure')
+              raise
+          finally:
+              shutil.rmtree(config, ignore_errors=True)
+          PUBLISHER
